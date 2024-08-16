@@ -1,0 +1,641 @@
+package pgxcache
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"reflect"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+// Queryable is an interface that wraps the pgx.Executor interface.
+type Queryable interface {
+	// Exec executes a query that doesn't return rows.
+	Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error)
+	// Query executes a query that returns rows, typically a SELECT.
+	Query(ctx context.Context, query string, args ...any) (pgx.Rows, error)
+	// QueryRow executes a query that is expected to return at most one row. QueryRow will always return a non-nil value.
+	QueryRow(ctx context.Context, query string, args ...any) pgx.Row
+	// SendBatch sends a batch of queries to the server. Use Batch.Send to create a batch. The returned Batch
+	SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResults
+}
+
+var _ Queryable = &Querier{}
+
+// Querier is a wrapper around pgx.Conn that caches prepared statements.
+type Querier struct {
+	// Options is the cache options.
+	Options *QueryOptions
+	// Querier is the query executor.
+	Querier Queryable
+	// Cacher is the cache store.
+	Cacher QueryCacher
+}
+
+// Exec is a helper that makes it easy to execute a query that doesn't return rows.
+func (x *Querier) Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
+	// get the cached item
+	item, err := x.get(ctx, query, args)
+	switch {
+	case err != nil:
+		return pgconn.CommandTag{}, err
+	case item != nil:
+		return item.CommandTag, nil
+	}
+
+	return x.Querier.Exec(ctx, query, args...)
+}
+
+// Query is a helper that makes it easy to query for multiple rows.
+func (x *Querier) Query(ctx context.Context, query string, args ...any) (pgx.Rows, error) {
+	// get the cached item
+	item, err := x.get(ctx, query, args)
+	switch {
+	case err != nil:
+		return nil, err
+	case item != nil:
+		return &Rows{item: item, index: -1}, nil
+	}
+
+	// get the rows
+	rows, err := x.Querier.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	// parse the query options
+	options := x.options(query)
+	// we should not cache the item
+	if options == nil {
+		return rows, nil
+	}
+
+	recorder := &RowsRecorder{
+		rows: rows,
+		item: &QueryResult{},
+		// cache the item after scanning
+		cache: func(item *QueryResult) error {
+			// set the cached item
+			return x.set(ctx, query, args, item, options)
+		},
+	}
+
+	// done!
+	return recorder, nil
+}
+
+// QueryRow is a helper that makes it easy to query for a single row.
+func (x *Querier) QueryRow(ctx context.Context, query string, args ...any) pgx.Row {
+	// get the cached item
+	item, err := x.get(ctx, query, args)
+	switch {
+	case err != nil:
+		return &RowError{err: err}
+	case item != nil:
+		return &Row{item: item}
+	}
+
+	// get the row
+	row := x.Querier.QueryRow(ctx, query, args...)
+
+	// parse the query options
+	options := x.options(query)
+	// we should not cache the item
+	if options == nil {
+		return row
+	}
+
+	// return the row recorder
+	return &RowRecorder{
+		row:    row,
+		result: &QueryResult{},
+		// cache the item after scanning
+		cache: func(item *QueryResult) error {
+			// set the cached item
+			return x.set(ctx, query, args, item, options)
+		},
+	}
+}
+
+// SendBatch is a helper that makes it easy to send a batch of queries.
+func (x *Querier) SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResults {
+	refresh := func() pgx.BatchResults {
+		return &BatchRecorder{
+			batch: x.Querier.SendBatch(ctx, batch),
+			cache: func(index int, item *QueryResult) error {
+				// get the query
+				query := batch.QueuedQueries[index]
+				// parse the query options
+				options := x.options(query.SQL)
+				// we should not cache the item
+				if options == nil {
+					return nil
+				}
+				// set the cached item
+				return x.set(ctx, query.SQL, query.Arguments, item, options)
+			},
+		}
+	}
+
+	querier := &BatchQuerier{}
+	// get the cached result
+	for _, query := range batch.QueuedQueries {
+		// get the cached item
+		item, err := x.get(ctx, query.SQL, query.Arguments)
+		switch {
+		case err != nil:
+			// we need to refresh the cache
+			return refresh()
+		case item != nil:
+			// append the row
+			querier.batch = append(querier.batch, item)
+		default:
+			return refresh()
+		}
+	}
+
+	return querier
+}
+
+func (x *Querier) get(ctx context.Context, query string, args []any) (*QueryResult, error) {
+	// prepare the query key
+	key := &QueryKey{
+		SQL:  query,
+		Args: args,
+	}
+
+	// get the cached item
+	item, err := x.Cacher.Get(ctx, key)
+	// done!
+	return item, err
+}
+
+func (x *Querier) set(ctx context.Context, query string, args []any, item *QueryResult, opts *QueryOptions) error {
+	// do not cache if the number of rows is less than the maximum number of rows
+	if len(item.Rows) < opts.MaxRows {
+		return nil
+	}
+
+	// prepare the query key
+	key := &QueryKey{
+		SQL:  query,
+		Args: args,
+	}
+	// set the cached item
+	return x.Cacher.Set(ctx, key, item, opts.MaxLiftime)
+}
+
+func (x *Querier) options(query string) *QueryOptions {
+	// parse the query options
+	options, err := ParseQueryOptions(query)
+	if err != nil {
+		// we should not cache the item
+		return x.Options
+	}
+
+	return options
+}
+
+var _ pgx.Row = &Row{}
+
+// Row is a wrapper around pgx.Row.
+type Row struct {
+	item *QueryResult
+}
+
+// Scan implements pgx.Row.
+func (r *Row) Scan(values ...any) error {
+	if len(r.item.Rows) <= 0 {
+		return io.EOF
+	}
+	// prepare the scanner
+	scanner := &RowScanner{
+		row: r.item.Rows[0],
+	}
+	// done!
+	return scanner.Scan(values...)
+}
+
+var _ pgx.Row = &RowRecorder{}
+
+// RowRecorder is a wrapper around pgx.Row that records the error.
+type RowRecorder struct {
+	row    pgx.Row
+	result *QueryResult
+	cache  func(*QueryResult) error
+}
+
+// Scan implements pgx.Row.
+func (r *RowRecorder) Scan(values ...any) error {
+	if err := r.row.Scan(values...); err != nil {
+		return err
+	}
+
+	// Record is an interface that provides metadata about a row.
+	type Record interface {
+		// CommandTag returns the command tag.
+		CommandTag() pgconn.CommandTag
+		// FieldDescriptions returns the field descriptions.
+		FieldDescriptions() []pgconn.FieldDescription
+	}
+
+	if record, ok := r.row.(Record); ok {
+		// cache the command tag and field descriptions
+		r.result.CommandTag = record.CommandTag()
+		r.result.Fields = record.FieldDescriptions()
+	}
+
+	data := make([]any, len(values))
+	copy(data, values)
+	// set the data
+	r.result.Rows = [][]any{data}
+	// done!
+	return r.cache(r.result)
+}
+
+var _ pgx.Row = &RowError{}
+
+// RowError is a wrapper around pgx.Row that returns an error.
+type RowError struct {
+	err error
+}
+
+// Scan implements pgx.Row.
+func (e RowError) Scan(values ...any) error {
+	return e.err
+}
+
+var _ pgx.Row = &RowScanner{}
+
+// RowScanner is a wrapper around pgx.Row that scans the values.
+type RowScanner struct {
+	row []any
+}
+
+// Scan implements pgx.Row.
+func (r *RowScanner) Scan(values ...any) error {
+	vcount := len(values)
+	rcount := len(r.row)
+	// check the number of columns
+	if vcount != rcount {
+		return fmt.Errorf("number of field descriptions must equal number of values, got %v and %v", vcount, rcount)
+	}
+	// copy the values
+	for index := range values {
+		source := reflect.ValueOf(r.row[index]).Elem()
+		// set the values
+		target := reflect.ValueOf(values[index]).Elem()
+		target.Set(source)
+	}
+
+	return nil
+}
+
+var _ pgx.Rows = &Rows{}
+
+// Rows is a wrapper around pgx.Rows that caches the rows.
+type Rows struct {
+	item  *QueryResult
+	index int
+}
+
+// Close implements pgx.Rows.
+func (r *Rows) Close() {
+	// no-op
+}
+
+// CommandTag implements pgx.Rows.
+func (r *Rows) CommandTag() pgconn.CommandTag {
+	return r.item.CommandTag
+}
+
+// Conn implements pgx.Rows.
+func (r *Rows) Conn() *pgx.Conn {
+	return nil
+}
+
+// Err implements pgx.Rows.
+func (r *Rows) Err() error {
+	return nil
+}
+
+// FieldDescriptions implements pgx.Rows.
+func (r *Rows) FieldDescriptions() []pgconn.FieldDescription {
+	return r.item.Fields
+}
+
+// Next implements pgx.Rows.
+func (r *Rows) Next() bool {
+	r.index++
+	// done!
+	return r.index < len(r.item.Rows)
+}
+
+// RawValues implements pgx.Rows.
+func (r *Rows) RawValues() [][]byte {
+	return nil
+}
+
+// Scan implements pgx.Rows.
+func (r *Rows) Scan(values ...any) error {
+	// get the values
+	row, err := r.Values()
+	if err != nil {
+		return err
+	}
+
+	// prepare the row scanner
+	scanner := &RowScanner{
+		row: row,
+	}
+	// done!
+	return scanner.Scan(values...)
+}
+
+// Values implements pgx.Rows.
+func (r *Rows) Values() ([]any, error) {
+	if r.index < 0 {
+		return []any{}, nil
+	}
+
+	if r.index >= len(r.item.Rows) {
+		return nil, io.EOF
+	}
+
+	return r.item.Rows[r.index], nil
+}
+
+var _ pgx.Rows = &RowsRecorder{}
+
+// RowsRecorder is a wrapper around pgx.Rows that records the rows.
+type RowsRecorder struct {
+	err   error
+	rows  pgx.Rows
+	item  *QueryResult
+	cache func(*QueryResult) error
+}
+
+// Err implements pgx.Rows.
+func (r *RowsRecorder) Err() error {
+	// check the rows error
+	if err := r.rows.Err(); err != nil {
+		return err
+	}
+
+	return r.err
+}
+
+// Conn implements pgx.Rows.
+func (r *RowsRecorder) Conn() *pgx.Conn {
+	return r.rows.Conn()
+}
+
+// Close implements pgx.Rows.
+func (r *RowsRecorder) Close() {
+	// we should cache the item if there is no error
+	if err := r.rows.Err(); err == nil {
+		// cache the command tag and field descriptions
+		r.item.CommandTag = r.rows.CommandTag()
+		r.item.Fields = r.rows.FieldDescriptions()
+		// cache the item
+		if err := r.cache(r.item); err != nil {
+			r.err = err
+		}
+	}
+
+	// close the rows
+	r.rows.Close()
+}
+
+// CommandTag implements pgx.Rows.
+func (r *RowsRecorder) CommandTag() pgconn.CommandTag {
+	return r.rows.CommandTag()
+}
+
+// FieldDescriptions implements pgx.Rows.
+func (r *RowsRecorder) FieldDescriptions() []pgconn.FieldDescription {
+	return r.rows.FieldDescriptions()
+}
+
+// Next implements pgx.Rows.
+func (r *RowsRecorder) Next() bool {
+	// move to the next row
+	if r.rows.Next() {
+		r.item.Rows = append(r.item.Rows, []any{})
+		// done!
+		return true
+	}
+
+	return false
+}
+
+// RawValues implements pgx.Rows.
+func (r *RowsRecorder) RawValues() [][]byte {
+	return r.rows.RawValues()
+}
+
+// Scan implements pgx.Rows.
+func (r *RowsRecorder) Scan(values ...any) error {
+	if err := r.rows.Scan(values...); err != nil {
+		return err
+	}
+
+	data := make([]any, len(values))
+	copy(data, values)
+
+	index := len(r.item.Rows) - 1
+	// copy the values
+	r.item.Rows[index] = data
+
+	return nil
+}
+
+// Values implements pgx.Rows.
+func (r *RowsRecorder) Values() ([]any, error) {
+	values, err := r.rows.Values()
+	if err != nil {
+		return nil, err
+	}
+
+	data := make([]any, len(values))
+	copy(data, values)
+
+	index := len(r.item.Rows) - 1
+	// copy the values
+	r.item.Rows[index] = data
+
+	return nil, nil
+}
+
+var _ pgx.Rows = &RowsError{}
+
+// RowsError is a wrapper around pgx.Rows that returns an error.
+type RowsError struct {
+	err error
+}
+
+// Close implements pgx.Rows.
+func (r *RowsError) Close() {}
+
+// CommandTag implements pgx.Rows.
+func (r *RowsError) CommandTag() pgconn.CommandTag {
+	return pgconn.CommandTag{}
+}
+
+// Conn implements pgx.Rows.
+func (r *RowsError) Conn() *pgx.Conn {
+	return nil
+}
+
+// Err implements pgx.Rows.
+func (r *RowsError) Err() error {
+	return r.err
+}
+
+// FieldDescriptions implements pgx.Rows.
+func (r *RowsError) FieldDescriptions() []pgconn.FieldDescription {
+	return nil
+}
+
+// Next implements pgx.Rows.
+func (r *RowsError) Next() bool {
+	return false
+}
+
+// RawValues implements pgx.Rows.
+func (r *RowsError) RawValues() [][]byte {
+	return nil
+}
+
+// Scan implements pgx.Rows.
+func (r *RowsError) Scan(dest ...any) error {
+	return r.err
+}
+
+// Values implements pgx.Rows.
+func (r *RowsError) Values() ([]any, error) {
+	return nil, r.err
+}
+
+var _ pgx.BatchResults = &BatchQuerier{}
+
+// BatchQuerier is a wrapper around pgx.BatchResults that records the batch results.
+type BatchQuerier struct {
+	batch []*QueryResult
+	index int
+}
+
+// Exec implements pgx.BatchResults.
+func (b *BatchQuerier) Exec() (pgconn.CommandTag, error) {
+	if b.index >= len(b.batch) {
+		return pgconn.CommandTag{}, io.EOF
+	}
+
+	item := b.batch[b.index]
+	// next
+	b.index++
+	// done!
+	return item.CommandTag, nil
+}
+
+// Query implements pgx.BatchResults.
+func (b *BatchQuerier) Query() (pgx.Rows, error) {
+	if b.index >= len(b.batch) {
+		return nil, io.EOF
+	}
+
+	item := b.batch[b.index]
+	// next
+	b.index++
+	// done!
+	return &Rows{item: item, index: -1}, nil
+}
+
+// QueryRow implements pgx.BatchResults.
+func (b *BatchQuerier) QueryRow() pgx.Row {
+	if b.index >= len(b.batch) {
+		return &RowError{err: io.EOF}
+	}
+
+	item := b.batch[b.index]
+	// next
+	b.index++
+	// done!
+	return &Row{item: item}
+}
+
+// Close implements pgx.BatchResults.
+func (b *BatchQuerier) Close() error {
+	return nil
+}
+
+var _ pgx.BatchResults = &BatchRecorder{}
+
+// BatchRecorder is a wrapper around pgx.BatchResults that records the batch results.
+type BatchRecorder struct {
+	batch pgx.BatchResults
+	cache func(int, *QueryResult) error
+	index int
+}
+
+// Exec implements pgx.BatchResults.
+func (b *BatchRecorder) Exec() (pgconn.CommandTag, error) {
+	tag, err := b.batch.Exec()
+	if err != nil {
+		return tag, err
+	}
+
+	b.index++
+	// done!
+	return tag, nil
+}
+
+// Query implements pgx.BatchResults.
+func (b *BatchRecorder) Query() (pgx.Rows, error) {
+	rows, err := b.batch.Query()
+	if err != nil {
+		return nil, err
+	}
+
+	index := b.index
+	// prepare record
+	recorder := &RowsRecorder{
+		rows: rows,
+		item: &QueryResult{},
+		// cache the item after scanning
+		cache: func(item *QueryResult) error {
+			return b.cache(index, item)
+		},
+	}
+
+	b.index++
+	// done!
+	return recorder, nil
+}
+
+// QueryRow implements pgx.BatchResults.
+func (b *BatchRecorder) QueryRow() pgx.Row {
+	row := b.batch.QueryRow()
+
+	index := b.index
+	// prepare record
+	recorder := &RowRecorder{
+		row:    row,
+		result: &QueryResult{},
+		// cache the item after scanning
+		cache: func(item *QueryResult) error {
+			return b.cache(index, item)
+		},
+	}
+
+	b.index++
+	// done
+	return recorder
+}
+
+// Close implements pgx.BatchResults.
+func (b *BatchRecorder) Close() error {
+	return nil
+}
