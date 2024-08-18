@@ -51,8 +51,8 @@ type QueryCacher interface {
 
 // QueryOptions represents the options that can be specified in a SQL query.
 type QueryOptions struct {
-	// MaxLiftime is the duration that the query result should be cached.
-	MaxLiftime time.Duration
+	// MaxLifetime is the duration that the query result should be cached.
+	MaxLifetime time.Duration
 	// MaxRows is the maximum number of rows that the query should return.
 	MaxRows int
 }
@@ -88,7 +88,7 @@ func ParseQueryOptions(query string) (*QueryOptions, error) {
 		switch item[1] {
 		case "@cache-ttl":
 			duration, _ := time.ParseDuration(item[2])
-			options.MaxLiftime = duration
+			options.MaxLifetime = duration
 		case "@cache-max-rows":
 			value, _ := strconv.Atoi(item[2])
 			options.MaxRows = value

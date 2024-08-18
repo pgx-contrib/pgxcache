@@ -28,8 +28,8 @@ func ExampleCacheQuerier() {
 		// -- @cache-max-rows 100
 		// -- @cache-ttl 30s
 		Options: &pgxcache.QueryOptions{
-			MaxLiftime: 30 * time.Second,
-			MaxRows:    1,
+			MaxLifetime: 30 * time.Second,
+			MaxRows:     1,
 		},
 		Cacher:  pgxcache.NewMemoryCacher(),
 		Querier: conn,

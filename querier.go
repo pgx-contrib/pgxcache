@@ -184,7 +184,7 @@ func (x *Querier) set(ctx context.Context, query string, args []any, item *Query
 		Args: args,
 	}
 	// set the cached item
-	return x.Cacher.Set(ctx, key, item, opts.MaxLiftime)
+	return x.Cacher.Set(ctx, key, item, opts.MaxLifetime)
 }
 
 func (x *Querier) options(query string) *QueryOptions {
@@ -250,7 +250,7 @@ func (r *RowRecorder) Scan(values ...any) error {
 	data := make([]any, len(values))
 	copy(data, values)
 	// set the data
-	r.result.Rows = [][]any{data}
+	r.result.Rows = append(r.result.Rows, data)
 	// done!
 	return r.cache(r.result)
 }
