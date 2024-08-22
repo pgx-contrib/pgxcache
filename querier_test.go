@@ -2,14 +2,14 @@ package pgxcache_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgx-contrib/pgxcache"
 )
-
-var count int
 
 func ExampleCacheQuerier() {
 	config, err := pgxpool.ParseConfig(os.Getenv("PGX_DATABASE_URL"))
@@ -17,10 +17,13 @@ func ExampleCacheQuerier() {
 		panic(err)
 	}
 
+	// create a new connection pool
 	conn, err := pgxpool.NewWithConfig(context.TODO(), config)
 	if err != nil {
 		panic(err)
 	}
+	// close the connection when the function returns
+	defer conn.Close()
 
 	// create a new querier
 	querier := &pgxcache.Querier{
@@ -35,8 +38,25 @@ func ExampleCacheQuerier() {
 		Querier: conn,
 	}
 
-	row := querier.QueryRow(context.TODO(), "SELECT 1")
-	if err := row.Scan(&count); err != nil {
+	// create a new organization struct
+	type Organization struct {
+		Name string `db:"name"`
+	}
+
+	// fetch all the organizations
+	rows, err := querier.Query(context.TODO(), "SELECT * FROM organization")
+	if err != nil {
 		panic(err)
+	}
+	// close the rows when the function returns
+	defer rows.Close()
+
+	for rows.Next() {
+		organization, err := pgx.RowToStructByName[Organization](rows)
+		if err != nil {
+			panic(err)
+		}
+
+		fmt.Println(organization.Name)
 	}
 }
