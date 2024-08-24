@@ -6,7 +6,7 @@ A caching layer for pgx. It's heavy inspired by [sqlcache](https://github.com/pr
 
 ## Getting Started
 
-You can use this [example](./querier_test.go) to get started.
+You can use these [examples](https://pkg.go.dev/github.com/pgx-contrib/pgxcache#pkg-examples) to get started.
 
 ## Disclaimer
 
