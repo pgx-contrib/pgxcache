@@ -4,7 +4,7 @@ go 1.22.6
 
 require (
 	github.com/dgraph-io/ristretto v0.1.1
-	github.com/jackc/pgx/v5 v5.6.0
+	github.com/jackc/pgx/v5 v5.7.0
 	github.com/mitchellh/hashstructure/v2 v2.0.2
 )
 
