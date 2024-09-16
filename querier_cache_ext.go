@@ -46,6 +46,12 @@ func (x *MemoryCacher) Get(_ context.Context, key *QueryKey) (*QueryResult, erro
 // Set implements Cacher.
 func (x *MemoryCacher) Set(_ context.Context, key *QueryKey, item *QueryResult, ttl time.Duration) error {
 	// using # of rows as cost
-	_ = x.cache.SetWithTTL(key.String(), item, int64(len(item.Rows)), ttl)
+	if ok := x.cache.SetWithTTL(key.String(), item, int64(len(item.Rows)), ttl); !ok {
+		return fmt.Errorf("unable to set the item for key: %v", key.String())
+	}
+
+	// wait the be done
+	x.cache.Wait()
+
 	return nil
 }
