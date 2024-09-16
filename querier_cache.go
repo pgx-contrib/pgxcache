@@ -87,11 +87,22 @@ func ParseQueryOptions(query string) (*QueryOptions, error) {
 		// set the options fields
 		switch item[1] {
 		case "@cache-ttl":
-			duration, _ := time.ParseDuration(item[2])
-			options.MaxLifetime = duration
+			value, err := time.ParseDuration(item[2])
+			switch {
+			case err != nil:
+				return nil, fmt.Errorf("invalid @cache-ttl query option: %w", err)
+			default:
+				options.MaxLifetime = value
+			}
 		case "@cache-max-rows":
-			value, _ := strconv.Atoi(item[2])
-			options.MaxRows = value
+			value, err := strconv.Atoi(item[2])
+			switch {
+			case err != nil:
+				return nil, fmt.Errorf("invalid @cache-max-rows query option: %w", err)
+			default:
+				options.MaxRows = value
+			}
+
 		}
 	}
 
