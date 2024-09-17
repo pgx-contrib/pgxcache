@@ -12,6 +12,8 @@ import (
 
 // Queryable is an interface that wraps the pgx.Executor interface.
 type Queryable interface {
+	// Begin starts a pseudo nested transaction.
+	Begin(ctx context.Context) (pgx.Tx, error)
 	// Exec executes a query that doesn't return rows.
 	Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error)
 	// Query executes a query that returns rows, typically a SELECT.
@@ -20,6 +22,8 @@ type Queryable interface {
 	QueryRow(ctx context.Context, query string, args ...any) pgx.Row
 	// SendBatch sends a batch of queries to the server. Use Batch.Send to create a batch. The returned Batch
 	SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResults
+	// CopyFrom copies data from reader to table.
+	CopyFrom(ctx context.Context, table pgx.Identifier, columns []string, source pgx.CopyFromSource) (int64, error)
 }
 
 var _ Queryable = &Querier{}
@@ -32,6 +36,48 @@ type Querier struct {
 	Querier Queryable
 	// Cacher is the cache store.
 	Cacher QueryCacher
+}
+
+// Begin implements Queryable.
+func (x *Querier) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := x.Querier.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &QuerierTx{
+		Tx:      tx,
+		Cacher:  x.Cacher,
+		Options: x.Options,
+	}, nil
+}
+
+// Close implements Queryable.
+func (x *Querier) Close() {
+	// Pool closes the connection.
+	type Pool interface {
+		// Close closes the connection.
+		Close()
+	}
+
+	if pool, ok := x.Querier.(Pool); ok {
+		pool.Close()
+	}
+
+	// Tx closes the connection.
+	type Tx interface {
+		// Conn returns the connection.
+		Conn() *pgx.Conn
+	}
+
+	if tx, ok := x.Querier.(Tx); ok {
+		tx.Conn().Close(context.Background())
+	}
+}
+
+// CopyFrom implements Queryable.
+func (x *Querier) CopyFrom(ctx context.Context, table pgx.Identifier, columns []string, source pgx.CopyFromSource) (int64, error) {
+	return x.Querier.CopyFrom(ctx, table, columns, source)
 }
 
 // Exec is a helper that makes it easy to execute a query that doesn't return rows.
@@ -196,6 +242,82 @@ func (x *Querier) options(query string) *QueryOptions {
 	}
 
 	return options
+}
+
+var _ pgx.Tx = &QuerierTx{}
+
+// Querier is a wrapper around pgx.Conn that caches prepared statements.
+type QuerierTx struct {
+	// Querier is the query executor.
+	Tx pgx.Tx
+	// Options is the cache options.
+	Options *QueryOptions
+	// Cacher is the cache store.
+	Cacher QueryCacher
+}
+
+// Begin implements pgx.Tx.
+func (q *QuerierTx) Begin(ctx context.Context) (pgx.Tx, error) {
+	return q.Queryable().Begin(ctx)
+}
+
+// Commit implements pgx.Tx.
+func (q *QuerierTx) Commit(ctx context.Context) error {
+	return q.Tx.Commit(ctx)
+}
+
+// Rollback implements pgx.Tx.
+func (q *QuerierTx) Rollback(ctx context.Context) error {
+	return q.Tx.Rollback(ctx)
+}
+
+// Conn implements pgx.Tx.
+func (q *QuerierTx) Conn() *pgx.Conn {
+	return q.Tx.Conn()
+}
+
+// CopyFrom implements pgx.Tx.
+func (q *QuerierTx) CopyFrom(ctx context.Context, table pgx.Identifier, columns []string, source pgx.CopyFromSource) (int64, error) {
+	return q.Queryable().CopyFrom(ctx, table, columns, source)
+}
+
+// Exec implements pgx.Tx.
+func (q *QuerierTx) Exec(ctx context.Context, query string, args ...any) (commandTag pgconn.CommandTag, err error) {
+	return q.Queryable().Exec(ctx, query, args...)
+}
+
+// LargeObjects implements pgx.Tx.
+func (q *QuerierTx) LargeObjects() pgx.LargeObjects {
+	return q.Tx.LargeObjects()
+}
+
+// Prepare implements pgx.Tx.
+func (q *QuerierTx) Prepare(ctx context.Context, name string, query string) (*pgconn.StatementDescription, error) {
+	return q.Tx.Prepare(ctx, name, query)
+}
+
+// Query implements pgx.Tx.
+func (q *QuerierTx) Query(ctx context.Context, query string, args ...any) (pgx.Rows, error) {
+	return q.Queryable().Query(ctx, query, args...)
+}
+
+// QueryRow implements pgx.Tx.
+func (q *QuerierTx) QueryRow(ctx context.Context, query string, args ...any) pgx.Row {
+	return q.Queryable().QueryRow(ctx, query, args...)
+}
+
+// SendBatch implements pgx.Tx.
+func (q *QuerierTx) SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResults {
+	return q.Queryable().SendBatch(ctx, batch)
+}
+
+// Queryable returns the query executor.
+func (q *QuerierTx) Queryable() Queryable {
+	return &Querier{
+		Querier: q.Tx,
+		Cacher:  q.Cacher,
+		Options: q.Options,
+	}
 }
 
 var _ pgx.Row = &Row{}
