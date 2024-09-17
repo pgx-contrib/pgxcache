@@ -759,5 +759,5 @@ func (b *BatchRecorder) QueryRow() pgx.Row {
 
 // Close implements pgx.BatchResults.
 func (b *BatchRecorder) Close() error {
-	return nil
+	return b.batch.Close()
 }
