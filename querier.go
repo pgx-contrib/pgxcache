@@ -237,8 +237,6 @@ func (x *Querier) options(query string) *QueryOptions {
 	// parse the query options
 	options, err := ParseQueryOptions(query)
 	if err != nil {
-		fmt.Println(query)
-		fmt.Println(err)
 		// we should not cache the item
 		return x.Options
 	}

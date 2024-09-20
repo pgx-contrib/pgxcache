@@ -58,23 +58,27 @@ type QueryOptions struct {
 }
 
 var patterns = []*regexp.Regexp{
-	regexp.MustCompile(`(@cache-max-rows) (\d+)`),
 	regexp.MustCompile(`(@cache-ttl) (\d+[s|m|h|d])`),
+	regexp.MustCompile(`(@cache-max-rows) (\d+)`),
 }
 
 // ParseQueryOptions parses query options from a SQL query.
 func ParseQueryOptions(query string) (*QueryOptions, error) {
 	var matches [][]string
+
 	// prepare the matches
 	for _, pattern := range patterns {
 		// find the options
 		item := pattern.FindAllStringSubmatch(query, 2)
 		// if the item is empty
-		if len(item) == 0 {
-			return nil, fmt.Errorf("invalid query cache options")
+		if len(item) != 0 {
+			// append the item to the matches
+			matches = append(matches, item...)
 		}
-		// append the item to the matches
-		matches = append(matches, item...)
+	}
+
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("invalid query cache options")
 	}
 
 	options := &QueryOptions{}
@@ -102,7 +106,6 @@ func ParseQueryOptions(query string) (*QueryOptions, error) {
 			default:
 				options.MaxRows = value
 			}
-
 		}
 	}
 
