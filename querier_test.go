@@ -11,7 +11,7 @@ import (
 	"github.com/pgx-contrib/pgxcache"
 )
 
-func ExampleCacheQuerier() {
+func ExampleQuerier() {
 	config, err := pgxpool.ParseConfig(os.Getenv("PGX_DATABASE_URL"))
 	if err != nil {
 		panic(err)
@@ -34,7 +34,7 @@ func ExampleCacheQuerier() {
 			MaxLifetime: 30 * time.Second,
 			MaxRows:     1,
 		},
-		Cacher:  pgxcache.NewMemoryCacher(),
+		Cacher:  pgxcache.NewMemoryQueryCacher(),
 		Querier: conn,
 	}
 
