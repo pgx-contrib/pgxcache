@@ -404,11 +404,27 @@ func (r *RowScanner) Scan(values ...any) error {
 	if vcount != rcount {
 		return fmt.Errorf("number of field descriptions must equal number of values, got %v and %v", vcount, rcount)
 	}
-	// copy the values
+
 	for index := range values {
-		source := reflect.ValueOf(r.row[index]).Elem()
-		// set the values
-		target := reflect.ValueOf(values[index]).Elem()
+		target := reflect.ValueOf(values[index])
+		target = reflect.Indirect(target)
+
+		source := reflect.ValueOf(r.row[index])
+		source = reflect.Indirect(source)
+
+		if target.Kind() != source.Kind() {
+			if target.Kind() == reflect.Ptr {
+				if source.IsValid() {
+					value := reflect.New(source.Type())
+					value.Elem().Set(source)
+					// overwrite the source
+					source = value
+				} else {
+					continue
+				}
+			}
+		}
+
 		target.Set(source)
 	}
 
