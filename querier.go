@@ -2,12 +2,11 @@ package pgxcache
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"reflect"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // Queryable is an interface that wraps the pgx.Executor interface.
@@ -88,7 +87,7 @@ func (x *Querier) Exec(ctx context.Context, query string, args ...any) (pgconn.C
 	case err != nil:
 		return pgconn.CommandTag{}, err
 	case item != nil:
-		return item.CommandTag, nil
+		return pgconn.NewCommandTag(item.CommandTag), nil
 	}
 
 	return x.Querier.Exec(ctx, query, args...)
@@ -102,7 +101,7 @@ func (x *Querier) Query(ctx context.Context, query string, args ...any) (pgx.Row
 	case err != nil:
 		return nil, err
 	case item != nil:
-		return &Rows{item: item, index: -1}, nil
+		return &Rows{item: item, index: -1, registry: pgtype.NewMap()}, nil
 	}
 
 	// get the rows
@@ -140,22 +139,25 @@ func (x *Querier) QueryRow(ctx context.Context, query string, args ...any) pgx.R
 	case err != nil:
 		return &RowError{err: err}
 	case item != nil:
-		return &Row{item: item}
+		return &Row{item: item, registry: pgtype.NewMap()}
 	}
-
-	// get the row
-	row := x.Querier.QueryRow(ctx, query, args...)
 
 	// parse the query options
 	options := x.options(query)
 	// we should not cache the item
 	if options == nil {
-		return row
+		return x.Querier.QueryRow(ctx, query, args...)
+	}
+
+	// get the row
+	rows, err := x.Querier.Query(ctx, query, args...)
+	if err != nil {
+		return &RowError{err: err}
 	}
 
 	// return the row recorder
 	return &RowRecorder{
-		row:    row,
+		rows:   rows,
 		result: &QueryResult{},
 		// cache the item after scanning
 		cache: func(item *QueryResult) error {
@@ -185,7 +187,7 @@ func (x *Querier) SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResu
 		}
 	}
 
-	querier := &BatchQuerier{}
+	querier := &BatchQuerier{registry: pgtype.NewMap()}
 	// get the cached result
 	for _, query := range batch.QueuedQueries {
 		// get the cached item
@@ -214,14 +216,28 @@ func (x *Querier) get(ctx context.Context, query string, args []any) (*QueryResu
 
 	// get the cached item
 	item, err := x.Cacher.Get(ctx, key)
+
 	// done!
 	return item, err
 }
 
 func (x *Querier) set(ctx context.Context, query string, args []any, item *QueryResult, opts *QueryOptions) error {
-	// do not cache if the number of rows is less than the maximum number of rows
-	if len(item.Rows) < opts.MaxRows {
+	if opts.MaxLifetime == 0 {
 		return nil
+	}
+
+	count := len(item.Rows)
+
+	if count < opts.MinRows {
+		if opts.MinRows > 0 {
+			return nil
+		}
+	}
+
+	if count > opts.MaxRows {
+		if opts.MaxRows > 0 {
+			return nil
+		}
 	}
 
 	// prepare the query key
@@ -229,6 +245,7 @@ func (x *Querier) set(ctx context.Context, query string, args []any, item *Query
 		SQL:  query,
 		Args: args,
 	}
+
 	// set the cached item
 	return x.Cacher.Set(ctx, key, item, opts.MaxLifetime)
 }
@@ -324,7 +341,8 @@ var _ pgx.Row = &Row{}
 
 // Row is a wrapper around pgx.Row.
 type Row struct {
-	item *QueryResult
+	item     *QueryResult
+	registry *pgtype.Map
 }
 
 // Scan implements pgx.Row.
@@ -332,10 +350,14 @@ func (r *Row) Scan(values ...any) error {
 	if len(r.item.Rows) <= 0 {
 		return io.EOF
 	}
+
 	// prepare the scanner
 	scanner := &RowScanner{
-		row: r.item.Rows[0],
+		row:      r.item.Rows[0],
+		fields:   r.item.Fields,
+		registry: r.registry,
 	}
+
 	// done!
 	return scanner.Scan(values...)
 }
@@ -344,35 +366,40 @@ var _ pgx.Row = &RowRecorder{}
 
 // RowRecorder is a wrapper around pgx.Row that records the error.
 type RowRecorder struct {
-	row    pgx.Row
+	rows   pgx.Rows
 	result *QueryResult
 	cache  func(*QueryResult) error
 }
 
 // Scan implements pgx.Row.
 func (r *RowRecorder) Scan(values ...any) error {
-	if err := r.row.Scan(values...); err != nil {
+	// close the rows
+	defer r.rows.Close()
+
+	if err := r.rows.Err(); err != nil {
 		return err
 	}
 
-	// Record is an interface that provides metadata about a row.
-	type Record interface {
-		// CommandTag returns the command tag.
-		CommandTag() pgconn.CommandTag
-		// FieldDescriptions returns the field descriptions.
-		FieldDescriptions() []pgconn.FieldDescription
+	if !r.rows.Next() {
+		err := r.rows.Err()
+		// check the error
+		switch err {
+		case nil:
+			return pgx.ErrNoRows
+		default:
+			return err
+		}
 	}
 
-	if record, ok := r.row.(Record); ok {
-		// cache the command tag and field descriptions
-		r.result.CommandTag = record.CommandTag()
-		r.result.Fields = record.FieldDescriptions()
+	// cache the command tag and field descriptions
+	r.result.CommandTag = r.rows.CommandTag().String()
+	r.result.Fields = r.rows.FieldDescriptions()
+	r.result.Rows = append(r.result.Rows, r.rows.RawValues())
+
+	if err := r.rows.Scan(values...); err != nil {
+		return err
 	}
 
-	data := make([]any, len(values))
-	copy(data, values)
-	// set the data
-	r.result.Rows = append(r.result.Rows, data)
 	// done!
 	return r.cache(r.result)
 }
@@ -393,50 +420,24 @@ var _ pgx.Row = &RowScanner{}
 
 // RowScanner is a wrapper around pgx.Row that scans the values.
 type RowScanner struct {
-	row []any
+	registry *pgtype.Map
+	row      [][]byte
+	fields   []pgconn.FieldDescription
 }
 
 // Scan implements pgx.Row.
 func (r *RowScanner) Scan(values ...any) error {
-	vcount := len(values)
-	rcount := len(r.row)
-	// check the number of columns
-	if vcount != rcount {
-		return fmt.Errorf("number of field descriptions must equal number of values, got %v and %v", vcount, rcount)
-	}
-
-	for index := range values {
-		target := reflect.ValueOf(values[index])
-		target = reflect.Indirect(target)
-
-		source := reflect.ValueOf(r.row[index])
-		source = reflect.Indirect(source)
-
-		if target.Kind() != source.Kind() {
-			if target.Kind() == reflect.Ptr {
-				if source.IsValid() {
-					value := reflect.New(source.Type())
-					value.Elem().Set(source)
-					// overwrite the source
-					source = value
-				} else {
-					continue
-				}
-			}
-		}
-
-		target.Set(source)
-	}
-
-	return nil
+	// scan the row
+	return pgx.ScanRow(r.registry, r.fields, r.row, values...)
 }
 
 var _ pgx.Rows = &Rows{}
 
 // Rows is a wrapper around pgx.Rows that caches the rows.
 type Rows struct {
-	item  *QueryResult
-	index int
+	registry *pgtype.Map
+	item     *QueryResult
+	index    int
 }
 
 // Close implements pgx.Rows.
@@ -446,7 +447,7 @@ func (r *Rows) Close() {
 
 // CommandTag implements pgx.Rows.
 func (r *Rows) CommandTag() pgconn.CommandTag {
-	return r.item.CommandTag
+	return pgconn.NewCommandTag(r.item.CommandTag)
 }
 
 // Conn implements pgx.Rows.
@@ -471,23 +472,23 @@ func (r *Rows) Next() bool {
 	return r.index < len(r.item.Rows)
 }
 
-// RawValues implements pgx.Rows.
-func (r *Rows) RawValues() [][]byte {
-	return nil
-}
-
 // Scan implements pgx.Rows.
 func (r *Rows) Scan(values ...any) error {
-	// get the values
-	row, err := r.Values()
-	if err != nil {
-		return err
+	if r.index < 0 {
+		return nil
+	}
+
+	if r.index >= len(r.item.Rows) {
+		return io.EOF
 	}
 
 	// prepare the row scanner
 	scanner := &RowScanner{
-		row: row,
+		row:      r.item.Rows[r.index],
+		fields:   r.item.Fields,
+		registry: r.registry,
 	}
+
 	// done!
 	return scanner.Scan(values...)
 }
@@ -502,7 +503,33 @@ func (r *Rows) Values() ([]any, error) {
 		return nil, io.EOF
 	}
 
-	return r.item.Rows[r.index], nil
+	// prepare the row scanner
+	scanner := &RowScanner{
+		row:      r.item.Rows[r.index],
+		fields:   r.item.Fields,
+		registry: r.registry,
+	}
+
+	values := make([]any, len(r.item.Fields))
+	// scan the values
+	if err := scanner.Scan(values...); err != nil {
+		return nil, err
+	}
+
+	return values, nil
+}
+
+// RawValues implements pgx.Rows.
+func (r *Rows) RawValues() [][]byte {
+	if r.index < 0 {
+		return nil
+	}
+
+	if r.index >= len(r.item.Rows) {
+		return nil
+	}
+
+	return r.item.Rows[r.index]
 }
 
 var _ pgx.Rows = &RowsRecorder{}
@@ -535,7 +562,7 @@ func (r *RowsRecorder) Close() {
 	// we should cache the item if there is no error
 	if err := r.rows.Err(); err == nil {
 		// cache the command tag and field descriptions
-		r.item.CommandTag = r.rows.CommandTag()
+		r.item.CommandTag = r.rows.CommandTag().String()
 		r.item.Fields = r.rows.FieldDescriptions()
 		// cache the item
 		if err := r.cache(r.item); err != nil {
@@ -561,7 +588,9 @@ func (r *RowsRecorder) FieldDescriptions() []pgconn.FieldDescription {
 func (r *RowsRecorder) Next() bool {
 	// move to the next row
 	if r.rows.Next() {
-		r.item.Rows = append(r.item.Rows, []any{})
+		row := r.rows.RawValues()
+		// add the row
+		r.item.Rows = append(r.item.Rows, row)
 		// done!
 		return true
 	}
@@ -576,35 +605,12 @@ func (r *RowsRecorder) RawValues() [][]byte {
 
 // Scan implements pgx.Rows.
 func (r *RowsRecorder) Scan(values ...any) error {
-	if err := r.rows.Scan(values...); err != nil {
-		return err
-	}
-
-	data := make([]any, len(values))
-	copy(data, values)
-
-	index := len(r.item.Rows) - 1
-	// copy the values
-	r.item.Rows[index] = data
-
-	return nil
+	return r.rows.Scan(values...)
 }
 
 // Values implements pgx.Rows.
 func (r *RowsRecorder) Values() ([]any, error) {
-	values, err := r.rows.Values()
-	if err != nil {
-		return nil, err
-	}
-
-	data := make([]any, len(values))
-	copy(data, values)
-
-	index := len(r.item.Rows) - 1
-	// copy the values
-	r.item.Rows[index] = data
-
-	return nil, nil
+	return r.rows.Values()
 }
 
 var _ pgx.Rows = &RowsError{}
@@ -661,8 +667,9 @@ var _ pgx.BatchResults = &BatchQuerier{}
 
 // BatchQuerier is a wrapper around pgx.BatchResults that records the batch results.
 type BatchQuerier struct {
-	batch []*QueryResult
-	index int
+	registry *pgtype.Map
+	batch    []*QueryResult
+	index    int
 }
 
 // Exec implements pgx.BatchResults.
@@ -675,7 +682,7 @@ func (b *BatchQuerier) Exec() (pgconn.CommandTag, error) {
 	// next
 	b.index++
 	// done!
-	return item.CommandTag, nil
+	return pgconn.NewCommandTag(item.CommandTag), nil
 }
 
 // Query implements pgx.BatchResults.
@@ -688,7 +695,7 @@ func (b *BatchQuerier) Query() (pgx.Rows, error) {
 	// next
 	b.index++
 	// done!
-	return &Rows{item: item, index: -1}, nil
+	return &Rows{item: item, index: -1, registry: b.registry}, nil
 }
 
 // QueryRow implements pgx.BatchResults.
@@ -701,7 +708,7 @@ func (b *BatchQuerier) QueryRow() pgx.Row {
 	// next
 	b.index++
 	// done!
-	return &Row{item: item}
+	return &Row{item: item, registry: b.registry}
 }
 
 // Close implements pgx.BatchResults.
@@ -755,12 +762,15 @@ func (b *BatchRecorder) Query() (pgx.Rows, error) {
 
 // QueryRow implements pgx.BatchResults.
 func (b *BatchRecorder) QueryRow() pgx.Row {
-	row := b.batch.QueryRow()
+	rows, err := b.batch.Query()
+	if err != nil {
+		return &RowError{err: err}
+	}
 
 	index := b.index
 	// prepare record
 	recorder := &RowRecorder{
-		row:    row,
+		rows:   rows,
 		result: &QueryResult{},
 		// cache the item after scanning
 		cache: func(item *QueryResult) error {

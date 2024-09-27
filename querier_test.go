@@ -28,11 +28,13 @@ func ExampleQuerier() {
 	// create a new querier
 	querier := &pgxcache.Querier{
 		// set the default query options, which can be overridden by the query
-		// -- @cache-max-rows 100
 		// -- @cache-ttl 30s
+		// -- @cache-min-rows 1
+		// -- @cache-max-rows 100
 		Options: &pgxcache.QueryOptions{
+			MinRows:     1,
+			MaxRows:     100,
 			MaxLifetime: 30 * time.Second,
-			MaxRows:     1,
 		},
 		Cacher:  pgxcache.NewMemoryQueryCacher(),
 		Querier: conn,
