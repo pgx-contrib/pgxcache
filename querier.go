@@ -119,9 +119,9 @@ func (x *Querier) Query(ctx context.Context, query string, args ...any) (pgx.Row
 
 	recorder := &RowsRecorder{
 		rows: rows,
-		item: &QueryResult{},
+		item: &QueryItem{},
 		// cache the item after scanning
-		cache: func(item *QueryResult) error {
+		cache: func(item *QueryItem) error {
 			// set the cached item
 			return x.set(ctx, query, args, item, options)
 		},
@@ -158,9 +158,9 @@ func (x *Querier) QueryRow(ctx context.Context, query string, args ...any) pgx.R
 	// return the row recorder
 	return &RowRecorder{
 		rows:   rows,
-		result: &QueryResult{},
+		result: &QueryItem{},
 		// cache the item after scanning
-		cache: func(item *QueryResult) error {
+		cache: func(item *QueryItem) error {
 			// set the cached item
 			return x.set(ctx, query, args, item, options)
 		},
@@ -172,7 +172,7 @@ func (x *Querier) SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResu
 	refresh := func() pgx.BatchResults {
 		return &BatchRecorder{
 			batch: x.Querier.SendBatch(ctx, batch),
-			cache: func(index int, item *QueryResult) error {
+			cache: func(index int, item *QueryItem) error {
 				// get the query
 				query := batch.QueuedQueries[index]
 				// parse the query options
@@ -207,7 +207,7 @@ func (x *Querier) SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResu
 	return querier
 }
 
-func (x *Querier) get(ctx context.Context, query string, args []any) (*QueryResult, error) {
+func (x *Querier) get(ctx context.Context, query string, args []any) (*QueryItem, error) {
 	// prepare the query key
 	key := &QueryKey{
 		SQL:  query,
@@ -221,7 +221,7 @@ func (x *Querier) get(ctx context.Context, query string, args []any) (*QueryResu
 	return item, err
 }
 
-func (x *Querier) set(ctx context.Context, query string, args []any, item *QueryResult, opts *QueryOptions) error {
+func (x *Querier) set(ctx context.Context, query string, args []any, item *QueryItem, opts *QueryOptions) error {
 	if opts.MaxLifetime == 0 {
 		return nil
 	}
@@ -341,7 +341,7 @@ var _ pgx.Row = &Row{}
 
 // Row is a wrapper around pgx.Row.
 type Row struct {
-	item     *QueryResult
+	item     *QueryItem
 	registry *pgtype.Map
 }
 
@@ -367,8 +367,8 @@ var _ pgx.Row = &RowRecorder{}
 // RowRecorder is a wrapper around pgx.Row that records the error.
 type RowRecorder struct {
 	rows   pgx.Rows
-	result *QueryResult
-	cache  func(*QueryResult) error
+	result *QueryItem
+	cache  func(*QueryItem) error
 }
 
 // Scan implements pgx.Row.
@@ -436,7 +436,7 @@ var _ pgx.Rows = &Rows{}
 // Rows is a wrapper around pgx.Rows that caches the rows.
 type Rows struct {
 	registry *pgtype.Map
-	item     *QueryResult
+	item     *QueryItem
 	index    int
 }
 
@@ -538,8 +538,8 @@ var _ pgx.Rows = &RowsRecorder{}
 type RowsRecorder struct {
 	err   error
 	rows  pgx.Rows
-	item  *QueryResult
-	cache func(*QueryResult) error
+	item  *QueryItem
+	cache func(*QueryItem) error
 }
 
 // Err implements pgx.Rows.
@@ -668,7 +668,7 @@ var _ pgx.BatchResults = &BatchQuerier{}
 // BatchQuerier is a wrapper around pgx.BatchResults that records the batch results.
 type BatchQuerier struct {
 	registry *pgtype.Map
-	batch    []*QueryResult
+	batch    []*QueryItem
 	index    int
 }
 
@@ -721,7 +721,7 @@ var _ pgx.BatchResults = &BatchRecorder{}
 // BatchRecorder is a wrapper around pgx.BatchResults that records the batch results.
 type BatchRecorder struct {
 	batch pgx.BatchResults
-	cache func(int, *QueryResult) error
+	cache func(int, *QueryItem) error
 	index int
 }
 
@@ -748,9 +748,9 @@ func (b *BatchRecorder) Query() (pgx.Rows, error) {
 	// prepare record
 	recorder := &RowsRecorder{
 		rows: rows,
-		item: &QueryResult{},
+		item: &QueryItem{},
 		// cache the item after scanning
-		cache: func(item *QueryResult) error {
+		cache: func(item *QueryItem) error {
 			return b.cache(index, item)
 		},
 	}
@@ -771,9 +771,9 @@ func (b *BatchRecorder) QueryRow() pgx.Row {
 	// prepare record
 	recorder := &RowRecorder{
 		rows:   rows,
-		result: &QueryResult{},
+		result: &QueryItem{},
 		// cache the item after scanning
-		cache: func(item *QueryResult) error {
+		cache: func(item *QueryItem) error {
 			return b.cache(index, item)
 		},
 	}

@@ -32,8 +32,8 @@ func (x *QueryKey) String() string {
 	return fmt.Sprintf("q%da%dh%s", len(x.SQL), len(x.Args), strconv.FormatUint(fingerprint, 10))
 }
 
-// QueryResult represents a query result.
-type QueryResult struct {
+// QueryItem represents a query result.
+type QueryItem struct {
 	// CommandTag is the command tag returned by the query.
 	CommandTag string
 	// Fields is the field descriptions of the query result.
@@ -42,10 +42,10 @@ type QueryResult struct {
 	Rows [][][]byte
 }
 
-var _ encoding.TextMarshaler = &QueryResult{}
+var _ encoding.TextMarshaler = &QueryItem{}
 
 // MarshalText implements encoding.TextMarshaler.
-func (q *QueryResult) MarshalText() ([]byte, error) {
+func (q *QueryItem) MarshalText() ([]byte, error) {
 	buffer := &bytes.Buffer{}
 	// encode the result
 	if err := gob.NewEncoder(buffer).Encode(q); err != nil {
@@ -55,10 +55,10 @@ func (q *QueryResult) MarshalText() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-var _ encoding.TextUnmarshaler = &QueryResult{}
+var _ encoding.TextUnmarshaler = &QueryItem{}
 
 // UnmarshalText implements encoding.TextUnmarshaler.
-func (q *QueryResult) UnmarshalText(data []byte) error {
+func (q *QueryItem) UnmarshalText(data []byte) error {
 	buffer := &bytes.Buffer{}
 	buffer.Write(data)
 
@@ -71,9 +71,9 @@ type QueryCacher interface {
 	// Get must return a pointer to the item, a boolean representing whether
 	// item is present or not, and an error (must be nil when key is not
 	// present).
-	Get(context.Context, *QueryKey) (*QueryResult, error)
+	Get(context.Context, *QueryKey) (*QueryItem, error)
 	// Set sets the item into cache with the given TTL.
-	Set(context.Context, *QueryKey, *QueryResult, time.Duration) error
+	Set(context.Context, *QueryKey, *QueryItem, time.Duration) error
 	// Reset resets the cache
 	Reset(context.Context) error
 }

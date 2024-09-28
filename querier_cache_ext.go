@@ -29,13 +29,13 @@ func NewMemoryQueryCacher() *MemoryQueryCacher {
 }
 
 // Get implements Cacher.
-func (x *MemoryQueryCacher) Get(_ context.Context, key *QueryKey) (*QueryResult, error) {
+func (x *MemoryQueryCacher) Get(_ context.Context, key *QueryKey) (*QueryItem, error) {
 	data, ok := x.cache.Get(key.String())
 	if !ok {
 		return nil, nil
 	}
 
-	item := &QueryResult{}
+	item := &QueryItem{}
 	// unmarshal the item
 	if err := item.UnmarshalText(data); err != nil {
 		return nil, err
@@ -45,7 +45,7 @@ func (x *MemoryQueryCacher) Get(_ context.Context, key *QueryKey) (*QueryResult,
 }
 
 // Set implements Cacher.
-func (x *MemoryQueryCacher) Set(_ context.Context, key *QueryKey, item *QueryResult, ttl time.Duration) error {
+func (x *MemoryQueryCacher) Set(_ context.Context, key *QueryKey, item *QueryItem, ttl time.Duration) error {
 	data, err := item.MarshalText()
 	if err != nil {
 		return err
