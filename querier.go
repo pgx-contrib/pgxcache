@@ -122,8 +122,14 @@ func (x *Querier) Query(ctx context.Context, query string, args ...any) (pgx.Row
 		item: &QueryItem{},
 		// cache the item after scanning
 		cache: func(item *QueryItem) error {
+			// prepare the query key
+			key := &QueryKey{
+				SQL:  query,
+				Args: args,
+			}
+
 			// set the cached item
-			return x.set(ctx, query, args, item, options)
+			return x.set(ctx, key, item, options)
 		},
 	}
 
@@ -161,8 +167,13 @@ func (x *Querier) QueryRow(ctx context.Context, query string, args ...any) pgx.R
 		result: &QueryItem{},
 		// cache the item after scanning
 		cache: func(item *QueryItem) error {
+			// prepare the query key
+			key := &QueryKey{
+				SQL:  query,
+				Args: args,
+			}
 			// set the cached item
-			return x.set(ctx, query, args, item, options)
+			return x.set(ctx, key, item, options)
 		},
 	}
 }
@@ -175,6 +186,11 @@ func (x *Querier) SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResu
 			cache: func(index int, item *QueryItem) error {
 				// get the query
 				query := batch.QueuedQueries[index]
+				// prepare the query key
+				key := &QueryKey{
+					SQL:  query.SQL,
+					Args: query.Arguments,
+				}
 				// parse the query options
 				options := x.options(query.SQL)
 				// we should not cache the item
@@ -182,7 +198,7 @@ func (x *Querier) SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResu
 					return nil
 				}
 				// set the cached item
-				return x.set(ctx, query.SQL, query.Arguments, item, options)
+				return x.set(ctx, key, item, options)
 			},
 		}
 	}
@@ -216,12 +232,15 @@ func (x *Querier) get(ctx context.Context, query string, args []any) (*QueryItem
 
 	// get the cached item
 	item, err := x.Cacher.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
 
 	// done!
 	return item, err
 }
 
-func (x *Querier) set(ctx context.Context, query string, args []any, item *QueryItem, opts *QueryOptions) error {
+func (x *Querier) set(ctx context.Context, key *QueryKey, item *QueryItem, opts *QueryOptions) error {
 	if opts.MaxLifetime == 0 {
 		return nil
 	}
@@ -238,12 +257,6 @@ func (x *Querier) set(ctx context.Context, query string, args []any, item *Query
 		if opts.MaxRows > 0 {
 			return nil
 		}
-	}
-
-	// prepare the query key
-	key := &QueryKey{
-		SQL:  query,
-		Args: args,
 	}
 
 	// set the cached item

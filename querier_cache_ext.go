@@ -30,13 +30,14 @@ func NewMemoryQueryCacher() *MemoryQueryCacher {
 
 // Get implements Cacher.
 func (x *MemoryQueryCacher) Get(_ context.Context, key *QueryKey) (*QueryItem, error) {
+	// get the data from the cache
 	data, ok := x.cache.Get(key.String())
 	if !ok {
 		return nil, nil
 	}
 
 	item := &QueryItem{}
-	// unmarshal the item
+	// unmarshal the data into the item
 	if err := item.UnmarshalText(data); err != nil {
 		return nil, err
 	}
@@ -45,14 +46,15 @@ func (x *MemoryQueryCacher) Get(_ context.Context, key *QueryKey) (*QueryItem, e
 }
 
 // Set implements Cacher.
-func (x *MemoryQueryCacher) Set(_ context.Context, key *QueryKey, item *QueryItem, ttl time.Duration) error {
+func (x *MemoryQueryCacher) Set(_ context.Context, key *QueryKey, item *QueryItem, lifetime time.Duration) error {
+	// marshal the item into bytes
 	data, err := item.MarshalText()
 	if err != nil {
 		return err
 	}
 
 	// using # of rows as cost
-	if ok := x.cache.SetWithTTL(key.String(), data, int64(len(item.Rows)), ttl); !ok {
+	if ok := x.cache.SetWithTTL(key.String(), data, int64(len(data)), lifetime); !ok {
 		return fmt.Errorf("unable to set the item for key: %v", key.String())
 	}
 

@@ -80,18 +80,18 @@ type QueryCacher interface {
 
 // QueryOptions represents the options that can be specified in a SQL query.
 type QueryOptions struct {
-	// MaxLifetime is the duration that the query result should be cached.
-	MaxLifetime time.Duration
 	// MinRows is the minimum number of rows that the query should return.
 	MinRows int
 	// MaxRows is the maximum number of rows that the query should return.
 	MaxRows int
+	// MaxLifetime is the duration that the query result should be cached.
+	MaxLifetime time.Duration
 }
 
 var patterns = []*regexp.Regexp{
-	regexp.MustCompile(`(@cache-ttl) (\d+[s|m|h|d])`),
 	regexp.MustCompile(`(@cache-min-rows) (\d+)`),
 	regexp.MustCompile(`(@cache-max-rows) (\d+)`),
+	regexp.MustCompile(`(@cache-max-lifetime) (\d+[s|m|h|d])`),
 }
 
 // ParseQueryOptions parses query options from a SQL query.
@@ -122,7 +122,7 @@ func ParseQueryOptions(query string) (*QueryOptions, error) {
 		}
 		// set the options fields
 		switch item[1] {
-		case "@cache-ttl":
+		case "@cache-ttl", "@cache-max-lifetime":
 			value, err := time.ParseDuration(item[2])
 			switch {
 			case err != nil:
