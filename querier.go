@@ -407,7 +407,7 @@ func (r *RowRecorder) Scan(values ...any) error {
 	// cache the command tag and field descriptions
 	r.result.CommandTag = r.rows.CommandTag().String()
 	r.result.Fields = r.rows.FieldDescriptions()
-	r.result.Rows = append(r.result.Rows, r.rows.RawValues())
+	r.result.Rows = append(r.result.Rows, r.RawValues())
 
 	if err := r.rows.Scan(values...); err != nil {
 		return err
@@ -415,6 +415,20 @@ func (r *RowRecorder) Scan(values ...any) error {
 
 	// done!
 	return r.cache(r.result)
+}
+
+// RawValues returns the raw values.
+func (r *RowRecorder) RawValues() [][]byte {
+	source := r.rows.RawValues()
+	target := make([][]byte, len(source))
+
+	for index, row := range source {
+		data := make([]byte, len(row))
+		copy(data, row)
+		target[index] = data
+	}
+
+	return target
 }
 
 var _ pgx.Row = &RowError{}
@@ -601,7 +615,13 @@ func (r *RowsRecorder) FieldDescriptions() []pgconn.FieldDescription {
 func (r *RowsRecorder) Next() bool {
 	// move to the next row
 	if r.rows.Next() {
-		row := r.rows.RawValues()
+		recorder := &RowRecorder{
+			rows:   r,
+			result: r.item,
+			cache:  r.cache,
+		}
+
+		row := recorder.RawValues()
 		// add the row
 		r.item.Rows = append(r.item.Rows, row)
 		// done!
