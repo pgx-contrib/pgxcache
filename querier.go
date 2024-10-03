@@ -117,11 +117,13 @@ func (x *Querier) Query(ctx context.Context, query string, args ...any) (pgx.Row
 		return rows, nil
 	}
 
+	item1 := &QueryItem{}
+
 	recorder := &RowsRecorder{
 		rows: rows,
-		item: &QueryItem{},
+		item: item1,
 		// cache the item after scanning
-		cache: func(item *QueryItem) error {
+		cache: func(_ *QueryItem) error {
 			// prepare the query key
 			key := &QueryKey{
 				SQL:  query,
@@ -129,7 +131,7 @@ func (x *Querier) Query(ctx context.Context, query string, args ...any) (pgx.Row
 			}
 
 			// set the cached item
-			return x.set(ctx, key, item, options)
+			return x.set(ctx, key, item1, options)
 		},
 	}
 
