@@ -603,7 +603,14 @@ func (r *RowsRecorder) FieldDescriptions() []pgconn.FieldDescription {
 func (r *RowsRecorder) Next() bool {
 	// move to the next row
 	if r.rows.Next() {
-		row := r.rows.RawValues()
+		var row [][]byte
+
+		for _, item := range r.rows.RawValues() {
+			value := make([]byte, len(item))
+			copy(value, item)
+			row = append(row, value)
+		}
+
 		// add the row
 		r.item.Rows = append(r.item.Rows, row)
 		// done!
