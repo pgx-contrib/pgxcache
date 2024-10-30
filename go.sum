@@ -3,8 +3,8 @@ github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XL
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/dgraph-io/ristretto v1.0.1 h1:g3/HaHVSP+eC3kbryP9vjUY6IAW7jcGYRpj9wUVr0bU=
-github.com/dgraph-io/ristretto v1.0.1/go.mod h1:TrOB7p4tcGX5Un6ppslIxtZaH2JLAk5GITV3TX2fuU8=
+github.com/dgraph-io/ristretto/v2 v2.0.0-alpha h1:JBy5Mm/z1HBj3hyDLFBS2uHalL971q3yjUaKcia0Sgo=
+github.com/dgraph-io/ristretto/v2 v2.0.0-alpha/go.mod h1:7bFGBdXzLfFFjKCN8YDQ7+98m/AEYcrdqH7s0En96Qg=
 github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13 h1:fAjc9m62+UWV/WAFKLNi6ZS0675eEUC9y3AlwSbQu1Y=
 github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13/go.mod h1:SqUrOPUnsFjfmXRMNPybcSiG0BgUW2AuFH8PAnS2iTw=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
