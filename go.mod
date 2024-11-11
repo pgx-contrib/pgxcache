@@ -5,7 +5,7 @@ go 1.23
 toolchain go1.23.2
 
 require (
-	github.com/dgraph-io/ristretto/v2 v2.0.0-alpha
+	github.com/dgraph-io/ristretto/v2 v2.0.0-rc1
 	github.com/jackc/pgx/v5 v5.7.1
 	github.com/mitchellh/hashstructure/v2 v2.0.2
 )
