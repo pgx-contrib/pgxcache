@@ -6,7 +6,7 @@ toolchain go1.24.1
 
 require (
 	github.com/dgraph-io/ristretto/v2 v2.3.0
-	github.com/jackc/pgx/v5 v5.7.5
+	github.com/jackc/pgx/v5 v5.7.6
 	github.com/mitchellh/hashstructure/v2 v2.0.2
 )
 
