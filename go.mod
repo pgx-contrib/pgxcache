@@ -1,12 +1,10 @@
 module github.com/pgx-contrib/pgxcache
 
-go 1.24.0
-
-toolchain go1.24.1
+go 1.25.0
 
 require (
 	github.com/dgraph-io/ristretto/v2 v2.4.0
-	github.com/jackc/pgx/v5 v5.8.0
+	github.com/jackc/pgx/v5 v5.9.1
 	github.com/mitchellh/hashstructure/v2 v2.0.2
 )
 
