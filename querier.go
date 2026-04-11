@@ -244,33 +244,24 @@ func (x *Querier) set(ctx context.Context, key *QueryKey, item *QueryItem, opts 
 	if opts.MaxLifetime == 0 {
 		return nil
 	}
-
 	count := len(item.Rows)
-
-	if count < opts.MinRows {
-		if opts.MinRows > 0 {
-			return nil
-		}
+	if opts.MinRows > 0 && count < opts.MinRows {
+		return nil
 	}
-
-	if count > opts.MaxRows {
-		if opts.MaxRows > 0 {
-			return nil
-		}
+	if opts.MaxRows > 0 && count > opts.MaxRows {
+		return nil
 	}
-
-	// set the cached item
 	return x.Cacher.Set(ctx, key, item, opts.MaxLifetime)
 }
 
 func (x *Querier) options(query string) *QueryOptions {
-	// parse the query options
 	options, err := ParseQueryOptions(query)
 	if err != nil {
-		// we should not cache the item
 		return x.Options
 	}
-
+	if options == nil {
+		return x.Options
+	}
 	return options
 }
 

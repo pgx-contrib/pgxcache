@@ -91,10 +91,13 @@ type QueryOptions struct {
 var patterns = []*regexp.Regexp{
 	regexp.MustCompile(`(@cache-min-rows) (\d+)`),
 	regexp.MustCompile(`(@cache-max-rows) (\d+)`),
-	regexp.MustCompile(`(@cache-max-lifetime) (\d+[s|m|h|d])`),
+	regexp.MustCompile(`(@cache-max-lifetime) (\d+[smhd])`),
 }
 
 // ParseQueryOptions parses query options from a SQL query.
+// Returns (nil, nil) when no annotations are found.
+// Returns (*QueryOptions, nil) when annotations are valid.
+// Returns (nil, error) when an annotation value is malformed.
 func ParseQueryOptions(query string) (*QueryOptions, error) {
 	var matches [][]string
 
@@ -110,23 +113,22 @@ func ParseQueryOptions(query string) (*QueryOptions, error) {
 	}
 
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("invalid query cache options")
+		return nil, nil
 	}
 
 	options := &QueryOptions{}
 	// iterate over the matches and set the options
 	for _, item := range matches {
-		// if the length of the item is not equal to 2, print MATCH and
 		if len(item) < 3 {
 			return nil, fmt.Errorf("invalid query cache options")
 		}
 		// set the options fields
 		switch item[1] {
-		case "@cache-ttl", "@cache-max-lifetime":
+		case "@cache-max-lifetime":
 			value, err := time.ParseDuration(item[2])
 			switch {
 			case err != nil:
-				return nil, fmt.Errorf("invalid @cache-ttl query option: %w", err)
+				return nil, fmt.Errorf("invalid @cache-max-lifetime query option: %w", err)
 			default:
 				options.MaxLifetime = value
 			}
