@@ -87,32 +87,31 @@ type QueryCacher interface {
 
 ## Development
 
-### Using nix devshell
+### DevContainer
+
+Open in VS Code with the Dev Containers extension. The environment provides Go,
+PostgreSQL 18, and Nix automatically.
+
+```
+PGX_DATABASE_URL=postgres://vscode@postgres:5432/pgxcache?sslmode=disable
+```
+
+### Nix
 
 ```bash
-nix develop
+nix develop          # enter shell with Go
 go tool ginkgo run -r
 ```
 
-### Using devcontainer
-
-```bash
-devcontainer up --workspace-folder .
-devcontainer exec --workspace-folder . go tool ginkgo run -r
-```
-
-### Running tests
+### Run tests
 
 ```bash
 # Unit tests only (no database required)
-go test ./...
-
-# Full suite with Ginkgo CLI
 go tool ginkgo run -r
 
-# Integration tests (requires Postgres)
-PGX_DATABASE_URL="postgres://vscode@localhost:5432/pgxcache?sslmode=disable" \
-  go tool ginkgo run -r
+# With integration tests
+export PGX_DATABASE_URL="postgres://localhost/pgxcache?sslmode=disable"
+go tool ginkgo run -r
 ```
 
 ## License
