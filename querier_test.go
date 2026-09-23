@@ -31,6 +31,7 @@ type MockRows struct {
 	ValuesFn            func() ([]any, error)
 	RawValuesFn         func() [][]byte
 	ConnFn              func() *pgx.Conn
+	TypeMapFn           func() *pgtype.Map
 }
 
 func (m *MockRows) Close() {
@@ -91,6 +92,13 @@ func (m *MockRows) RawValues() [][]byte {
 func (m *MockRows) Conn() *pgx.Conn {
 	if m.ConnFn != nil {
 		return m.ConnFn()
+	}
+	return nil
+}
+
+func (m *MockRows) TypeMap() *pgtype.Map {
+	if m.TypeMapFn != nil {
+		return m.TypeMapFn()
 	}
 	return nil
 }
@@ -467,6 +475,10 @@ var _ = Describe("Rows", func() {
 	It("Err returns nil", func() {
 		Expect(rows.Err()).To(BeNil())
 	})
+
+	It("TypeMap returns the registry", func() {
+		Expect(rows.TypeMap()).To(BeIdenticalTo(rows.registry))
+	})
 })
 
 var _ = Describe("RowError", func() {
@@ -520,6 +532,10 @@ var _ = Describe("RowsError", func() {
 
 	It("Close does nothing", func() {
 		Expect(func() { re.Close() }).NotTo(Panic())
+	})
+
+	It("TypeMap returns nil", func() {
+		Expect(re.TypeMap()).To(BeNil())
 	})
 })
 
@@ -614,6 +630,19 @@ var _ = Describe("RowsRecorder", func() {
 			cache: func(i *QueryItem) error { return nil },
 		}
 		Expect(recorder.Err()).To(Equal(sentinel))
+	})
+
+	It("TypeMap delegates to underlying rows", func() {
+		registry := pgtype.NewMap()
+		mockRows := &MockRows{
+			TypeMapFn: func() *pgtype.Map { return registry },
+		}
+		recorder := &RowsRecorder{
+			rows:  mockRows,
+			item:  &QueryItem{},
+			cache: func(i *QueryItem) error { return nil },
+		}
+		Expect(recorder.TypeMap()).To(BeIdenticalTo(registry))
 	})
 })
 

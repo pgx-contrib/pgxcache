@@ -550,6 +550,11 @@ func (r *Rows) RawValues() [][]byte {
 	return r.item.Rows[r.index]
 }
 
+// TypeMap implements pgx.Rows.
+func (r *Rows) TypeMap() *pgtype.Map {
+	return r.registry
+}
+
 var _ pgx.Rows = &RowsRecorder{}
 
 // RowsRecorder is a wrapper around pgx.Rows that records the rows.
@@ -637,6 +642,11 @@ func (r *RowsRecorder) Values() ([]any, error) {
 	return r.rows.Values()
 }
 
+// TypeMap implements pgx.Rows.
+func (r *RowsRecorder) TypeMap() *pgtype.Map {
+	return r.rows.TypeMap()
+}
+
 var _ pgx.Rows = &RowsError{}
 
 // RowsError is a wrapper around pgx.Rows that returns an error.
@@ -685,6 +695,11 @@ func (r *RowsError) Scan(dest ...any) error {
 // Values implements pgx.Rows.
 func (r *RowsError) Values() ([]any, error) {
 	return nil, r.err
+}
+
+// TypeMap implements pgx.Rows.
+func (r *RowsError) TypeMap() *pgtype.Map {
+	return nil
 }
 
 var _ pgx.BatchResults = &BatchQuerier{}
