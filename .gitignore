@@ -27,3 +27,11 @@ go.work.sum
 # Nix
 .direnv/
 result
+
+# direnv
+.env.local
+.envrc.local
+
+# Local nix build result symlinks (point into /nix/store).
+.nix
+.nix-*-link
