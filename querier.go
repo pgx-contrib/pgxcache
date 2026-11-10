@@ -755,6 +755,13 @@ func (b *BatchQuerier) Close() error {
 	return nil
 }
 
+// Tx implements pgx.BatchResults. Cached results never begin a transaction, because the
+// query that begins one is never cached, so a batch that begins a transaction is always
+// served by a BatchRecorder.
+func (b *BatchQuerier) Tx() pgx.Tx {
+	return nil
+}
+
 var _ pgx.BatchResults = &BatchRecorder{}
 
 // BatchRecorder is a wrapper around pgx.BatchResults that records the batch results.
@@ -825,4 +832,9 @@ func (b *BatchRecorder) QueryRow() pgx.Row {
 // Close implements pgx.BatchResults.
 func (b *BatchRecorder) Close() error {
 	return b.batch.Close()
+}
+
+// Tx implements pgx.BatchResults. It returns the transaction begun by pgx.Batch.BeginTx, if any.
+func (b *BatchRecorder) Tx() pgx.Tx {
+	return b.batch.Tx()
 }
