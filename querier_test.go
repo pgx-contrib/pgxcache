@@ -110,9 +110,17 @@ type MockBatchResults struct {
 	QueryFn    func() (pgx.Rows, error)
 	QueryRowFn func() pgx.Row
 	CloseFn    func() error
+	TxFn       func() pgx.Tx
 }
 
-func (m *MockBatchResults) Exec() (pgconn.CommandTag, error) {
+func (m *MockBatchResults) Tx() pgx.Tx {
+	if m.TxFn != nil {
+		return m.TxFn()
+	}
+	return nil
+}
+
+func (m *MockBatchResults) Exec()(pgconn.CommandTag, error) {
 	if m.ExecFn != nil {
 		return m.ExecFn()
 	}
@@ -729,6 +737,10 @@ var _ = Describe("BatchQuerier", func() {
 		Expect(rows2).NotTo(BeNil())
 	})
 
+	It("Tx returns nil", func() {
+		Expect(bq.Tx()).To(BeNil())
+	})
+
 	It("Query returns io.EOF at end", func() {
 		bq.Query()
 		bq.Query()
@@ -801,6 +813,18 @@ var _ = Describe("BatchRecorder", func() {
 
 		Expect(cacheIndices).To(Equal([]int{0, 1}))
 		Expect(recorder.index).To(Equal(2))
+	})
+
+	It("Tx delegates to the wrapped batch results", func() {
+		tx := &QuerierTx{}
+		recorder := &BatchRecorder{
+			batch: &MockBatchResults{TxFn: func() pgx.Tx { return tx }},
+			cache: func(int, *QueryItem) error { return nil },
+		}
+		Expect(recorder.Tx()).To(BeIdenticalTo(tx))
+
+		recorder.batch = &MockBatchResults{}
+		Expect(recorder.Tx()).To(BeNil())
 	})
 
 	It("Exec delegates and increments index", func() {
