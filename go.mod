@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/dgraph-io/ristretto/v2 v2.4.2
-	github.com/jackc/pgx/v5 v5.12.0
+	github.com/jackc/pgx/v5 v5.13.0
 	github.com/mitchellh/hashstructure/v2 v2.0.2
 	github.com/onsi/ginkgo/v2 v2.34.0
 	github.com/onsi/gomega v1.44.0
